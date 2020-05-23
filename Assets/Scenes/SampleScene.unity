@@ -327,6 +327,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cd7bdfddd2b67d742a9f714d784b3535, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  raw_data: 
+  data_dim: {x: 64, y: 64, z: 64}
 --- !u!4 &983642014
 Transform:
   m_ObjectHideFlags: 0
@@ -365,3 +367,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 73766e503b8ff2646a256aaacc3ae5db, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  resolution: {x: 20, y: 20, z: 20}
+  threshold: 100

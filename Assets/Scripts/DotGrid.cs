@@ -9,6 +9,8 @@ public class DotGrid : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
+        /*
+        GetComponent<DataLoader>().loadData();
         voxels = GetComponent<DataLoader>().getData();
 
         foreach (KeyValuePair<Vector3, float> voxel in voxels)
@@ -21,6 +23,7 @@ public class DotGrid : MonoBehaviour
             dot.GetComponent<MeshRenderer>().material.color = Color.white * voxel.Value;
 
         }
+        */
     }
 
     // Update is called once per frame
