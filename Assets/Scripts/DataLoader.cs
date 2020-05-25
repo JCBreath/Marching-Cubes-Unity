@@ -5,10 +5,13 @@ using UnityEngine;
 
 public class DataLoader : MonoBehaviour
 {
-    public byte[] raw_data;
+    public string file_name;
+    byte[] raw_data;
     public Vector3Int data_dim;
     public Dictionary<Vector3, float> voxels;
     public int[][][] data;
+
+    
 
     // public Dictionary<Vector3, float> getData()
     public int[][][] getData()
@@ -49,7 +52,7 @@ public class DataLoader : MonoBehaviour
 
     public void loadData()
     {
-        raw_data = File.ReadAllBytes("Assets/Resources/Datasets/neghip.raw");
+        raw_data = File.ReadAllBytes("Assets/Resources/Datasets/"+file_name+".raw");
         /*
         for(int i=0;i<raw_data.Length;i++)
         {
