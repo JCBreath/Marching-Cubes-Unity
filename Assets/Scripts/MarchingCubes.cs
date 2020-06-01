@@ -1,6 +1,12 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Unity.Jobs;
+using UnityEditor;
 using UnityEngine;
 
 public class MarchingCubes : MonoBehaviour
@@ -273,39 +279,6 @@ public class MarchingCubes : MonoBehaviour
         {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
         };
     private Vector3Int[][] TriangulationTable = new Vector3Int[256][];
-    private static int[] edgeTable = new int[]{
-    0x0  , 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c,
-    0x80c, 0x905, 0xa0f, 0xb06, 0xc0a, 0xd03, 0xe09, 0xf00,
-    0x190, 0x99 , 0x393, 0x29a, 0x596, 0x49f, 0x795, 0x69c,
-    0x99c, 0x895, 0xb9f, 0xa96, 0xd9a, 0xc93, 0xf99, 0xe90,
-    0x230, 0x339, 0x33 , 0x13a, 0x636, 0x73f, 0x435, 0x53c,
-    0xa3c, 0xb35, 0x83f, 0x936, 0xe3a, 0xf33, 0xc39, 0xd30,
-    0x3a0, 0x2a9, 0x1a3, 0xaa , 0x7a6, 0x6af, 0x5a5, 0x4ac,
-    0xbac, 0xaa5, 0x9af, 0x8a6, 0xfaa, 0xea3, 0xda9, 0xca0,
-    0x460, 0x569, 0x663, 0x76a, 0x66 , 0x16f, 0x265, 0x36c,
-    0xc6c, 0xd65, 0xe6f, 0xf66, 0x86a, 0x963, 0xa69, 0xb60,
-    0x5f0, 0x4f9, 0x7f3, 0x6fa, 0x1f6, 0xff , 0x3f5, 0x2fc,
-    0xdfc, 0xcf5, 0xfff, 0xef6, 0x9fa, 0x8f3, 0xbf9, 0xaf0,
-    0x650, 0x759, 0x453, 0x55a, 0x256, 0x35f, 0x55 , 0x15c,
-    0xe5c, 0xf55, 0xc5f, 0xd56, 0xa5a, 0xb53, 0x859, 0x950,
-    0x7c0, 0x6c9, 0x5c3, 0x4ca, 0x3c6, 0x2cf, 0x1c5, 0xcc ,
-    0xfcc, 0xec5, 0xdcf, 0xcc6, 0xbca, 0xac3, 0x9c9, 0x8c0,
-    0x8c0, 0x9c9, 0xac3, 0xbca, 0xcc6, 0xdcf, 0xec5, 0xfcc,
-    0xcc , 0x1c5, 0x2cf, 0x3c6, 0x4ca, 0x5c3, 0x6c9, 0x7c0,
-    0x950, 0x859, 0xb53, 0xa5a, 0xd56, 0xc5f, 0xf55, 0xe5c,
-    0x15c, 0x55 , 0x35f, 0x256, 0x55a, 0x453, 0x759, 0x650,
-    0xaf0, 0xbf9, 0x8f3, 0x9fa, 0xef6, 0xfff, 0xcf5, 0xdfc,
-    0x2fc, 0x3f5, 0xff , 0x1f6, 0x6fa, 0x7f3, 0x4f9, 0x5f0,
-    0xb60, 0xa69, 0x963, 0x86a, 0xf66, 0xe6f, 0xd65, 0xc6c,
-    0x36c, 0x265, 0x16f, 0x66 , 0x76a, 0x663, 0x569, 0x460,
-    0xca0, 0xda9, 0xea3, 0xfaa, 0x8a6, 0x9af, 0xaa5, 0xbac,
-    0x4ac, 0x5a5, 0x6af, 0x7a6, 0xaa , 0x1a3, 0x2a9, 0x3a0,
-    0xd30, 0xc39, 0xf33, 0xe3a, 0x936, 0x83f, 0xb35, 0xa3c,
-    0x53c, 0x435, 0x73f, 0x636, 0x13a, 0x33 , 0x339, 0x230,
-    0xe90, 0xf99, 0xc93, 0xd9a, 0xa96, 0xb9f, 0x895, 0x99c,
-    0x69c, 0x795, 0x49f, 0x596, 0x29a, 0x393, 0x99 , 0x190,
-    0xf00, 0xe09, 0xd03, 0xc0a, 0xb06, 0xa0f, 0x905, 0x80c,
-    0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x0   };
     private static readonly int[,] EdgeConnection = new int[,]
     {
         {0,1}, {1,2}, {2,3}, {3,0},
@@ -317,31 +290,47 @@ public class MarchingCubes : MonoBehaviour
     private int r_i;
     private float[][][] sampleBuffer;
 
+
     Mesh mesh;
-    List<Vector3> final_v;
-    List<int> final_t;
+    private List<Vector3> final_v;
+    private List<int> final_t;
 
     GameObject Canvas;
     UI CanvasUI;
+    Vector3Int test_cell;
+    
 
+    public struct TJob : IJob
+    {
+        public Vector3Int p;
+        public int[][][] data;
+        public float[][][] buffer;
+        public Vector3Int resolution;
+        public Vector3Int data_dim;
+
+        public void Execute()
+        {
+            buffer[p.x][p.y][p.z] = trilinear(p, data, resolution, data_dim);
+        }
+    }
 
     Vector3 VoxToWorld(Vector3 p_vox)
     {
         return new Vector3(p_vox.x/resolution.x*data_dim.x, p_vox.y / resolution.y * data_dim.y, p_vox.z / resolution.z * data_dim.z);
     }
 
-    Vector3 WorldToVox(Vector3 p_world)
+    static Vector3 WorldToVox(Vector3 p_world, Vector3 resolution, Vector3 data_dim)
     {
         return new Vector3(p_world.x / resolution.x * data_dim.x, p_world.y / resolution.y * data_dim.y, p_world.z / resolution.z * data_dim.z);
     }
 
-    float lerp(float x1, float x2, float y1, float y2, float x)
+    static float lerp(float x1, float x2, float y1, float y2, float x)
     {
         if(x2-x1 == 0) { return y1;  }
         return (y2 - y1) * ((x - x1) / (x2 - x1)) + y1;
     }
 
-    float getData(Vector3Int p)
+    static int getData(Vector3Int p, int[][][] data)
     {
         return data[p.x][p.y][p.z];
     }
@@ -351,10 +340,15 @@ public class MarchingCubes : MonoBehaviour
         return sampleBuffer[p.x][p.y][p.z];
     }
 
-    float trilinear(Vector3Int p_world)
+    float getBufferXYZ(int x, int y, int z)
+    {
+        return sampleBuffer[x][y][z];
+    }
+
+    static float trilinear(Vector3Int p_world, int[][][] data, Vector3 resolution, Vector3 data_dim)
     {
         
-        Vector3 p = WorldToVox(p_world);
+        Vector3 p = WorldToVox(p_world, resolution, data_dim);
         Vector3Int p000 = new Vector3Int(Mathf.FloorToInt(p.x), Mathf.FloorToInt(p.y), Mathf.FloorToInt(p.z));
         Vector3Int p111 = new Vector3Int(Mathf.CeilToInt(p.x), Mathf.CeilToInt(p.y), Mathf.CeilToInt(p.z));
 
@@ -370,10 +364,10 @@ public class MarchingCubes : MonoBehaviour
 
         // Debug.Log(string.Format("{0} {1} {2} {3}", p_world, p, p000, p111));
         
-        float qx00 = lerp(p000.x, p100.x, getData(p000), getData(p100), p.x);
-        float qx01 = lerp(p001.x, p101.x, getData(p001), getData(p101), p.x);
-        float qx10 = lerp(p010.x, p110.x, getData(p010), getData(p110), p.x);
-        float qx11 = lerp(p011.x, p111.x, getData(p011), getData(p111), p.x);
+        float qx00 = lerp(p000.x, p100.x, getData(p000, data), getData(p100, data), p.x);
+        float qx01 = lerp(p001.x, p101.x, getData(p001, data), getData(p101, data), p.x);
+        float qx10 = lerp(p010.x, p110.x, getData(p010, data), getData(p110, data), p.x);
+        float qx11 = lerp(p011.x, p111.x, getData(p011, data), getData(p111, data), p.x);
 
         // print(String.Format("{0} {1} {2}", getData(p000), voxels[p000], p000.x + data_dim.x * p000.y + data_dim.x * data_dim.y * p000.z));
 
@@ -395,37 +389,48 @@ public class MarchingCubes : MonoBehaviour
 
     void DrawCell(Vector3Int p)
     {
-        Vector3Int[] cell = new Vector3Int[] {
-            new Vector3Int(p.x, p.y, p.z),
-            new Vector3Int(p.x+1, p.y, p.z),
-            new Vector3Int(p.x+1, p.y+1, p.z),
-            new Vector3Int(p.x, p.y+1, p.z),
-            new Vector3Int(p.x, p.y, p.z+1),
-            new Vector3Int(p.x+1, p.y, p.z+1),
-            new Vector3Int(p.x+1, p.y+1, p.z+1),
-            new Vector3Int(p.x, p.y+1, p.z+1)
-        };
+        Vector3Int[] cell = new Vector3Int[8];
+        cell[0] = new Vector3Int(p.x, p.y, p.z);
+        cell[1] = new Vector3Int(p.x + 1, p.y, p.z);
+        cell[2] = new Vector3Int(p.x + 1, p.y + 1, p.z);
+        cell[3] = new Vector3Int(p.x, p.y + 1, p.z);
+        cell[4] = new Vector3Int(p.x, p.y, p.z + 1);
+        cell[5] = new Vector3Int(p.x + 1, p.y, p.z + 1);
+        cell[6] = new Vector3Int(p.x + 1, p.y + 1, p.z + 1);
+        cell[7] = new Vector3Int(p.x, p.y + 1, p.z + 1);
+
+
 
         int cube_index = 0;
         // Debug.Log(cell[0]);
         // Debug.Log(WorldToVox(cell[0]));
         // if (trilinear(cell[0]) < threshold) { cube_index |= 1; }
-        if (getBuffer(cell[0]) < threshold) { cube_index |= 1; }
-        if (getBuffer(cell[1]) < threshold) { cube_index |= 2; }
-        if (getBuffer(cell[2]) < threshold) { cube_index |= 4; }
-        if (getBuffer(cell[3]) < threshold) { cube_index |= 8; }
-        if (getBuffer(cell[4]) < threshold) { cube_index |= 16; }
-        if (getBuffer(cell[5]) < threshold) { cube_index |= 32; }
-        if (getBuffer(cell[6]) < threshold) { cube_index |= 64; }
-        if (getBuffer(cell[7]) < threshold) { cube_index |= 128; }
+        //if (getBuffer(cell[0]) < threshold) { cube_index += 1; }
+        //if (getBuffer(cell[1]) < threshold) { cube_index += 2; }
+        //if (getBuffer(cell[2]) < threshold) { cube_index += 4; }
+        //if (getBuffer(cell[3]) < threshold) { cube_index += 8; }
+        //if (getBuffer(cell[4]) < threshold) { cube_index += 16; }
+        //if (getBuffer(cell[5]) < threshold) { cube_index += 32; }
+        //if (getBuffer(cell[6]) < threshold) { cube_index += 64; }
 
+        if (getBufferXYZ(p.x, p.y, p.z) < threshold) { cube_index += 1; }
+        if (getBufferXYZ(p.x + 1, p.y, p.z) < threshold) { cube_index += 2; }
+        if (getBufferXYZ(p.x + 1, p.y + 1, p.z) < threshold) { cube_index += 4; }
+        if (getBufferXYZ(p.x, p.y + 1, p.z) < threshold) { cube_index += 8; }
+        if (getBufferXYZ(p.x, p.y, p.z + 1) < threshold) { cube_index += 16; }
+        if (getBufferXYZ(p.x + 1, p.y, p.z + 1) < threshold) { cube_index += 32; }
+        if (getBufferXYZ(p.x + 1, p.y + 1, p.z + 1) < threshold) { cube_index += 64; }
+        if (getBufferXYZ(p.x, p.y + 1, p.z + 1) < threshold) { cube_index += 128; }
 
+        // print(getBufferXYZ(p.x, p.y, p.z));
 
+        //final_v[p.x + p.y * (resolution.x-1) + p.z * (resolution.y-1) * (resolution.z-1)] = new List<Vector3>();
+        // print(p.x);
 
-        
         int tri_num = TriangulationTable[cube_index].Length;
 
         if (tri_num == 0) { return; }
+        
 
         for (int t_i = 0; t_i < tri_num; t_i++)
         {
@@ -449,49 +454,55 @@ public class MarchingCubes : MonoBehaviour
             vertices[0] = new Vector3(vertices[0].x / resolution.x, vertices[0].y / resolution.y, vertices[0].z / resolution.z);
             vertices[1] = new Vector3(vertices[1].x / resolution.x, vertices[1].y / resolution.y, vertices[1].z / resolution.z);
             vertices[2] = new Vector3(vertices[2].x / resolution.x, vertices[2].y / resolution.y, vertices[2].z / resolution.z);
-            
-            if(SmoothNormal)
-            {
-                int v0_idx = final_v.FindIndex(v => v == vertices[0]);
-                if (v0_idx != -1)
-                    final_t.Add(v0_idx);
-                else
-                {
-                    final_t.Add(final_v.Count);
-                    final_v.Add(vertices[0]);
-                }
 
-                int v1_idx = final_v.FindIndex(v => v == vertices[1]);
-                if (v1_idx != -1)
-                    final_t.Add(v1_idx);
-                else
-                {
-                    final_t.Add(final_v.Count);
-                    final_v.Add(vertices[1]);
-                }
+            //if(SmoothNormal)
+            //{
+            //    int v0_idx = final_v.FindIndex(v => v == vertices[0]);
+            //    if (v0_idx != -1)
+            //        final_t.Add(v0_idx);
+            //    else
+            //    {
+            //        final_t.Add(final_v.Count);
+            //        final_v.Add(vertices[0]);
+            //    }
 
-                int v2_idx = final_v.FindIndex(v => v == vertices[2]);
-                if (v2_idx != -1)
-                    final_t.Add(v2_idx);
-                else
-                {
-                    final_t.Add(final_v.Count);
-                    final_v.Add(vertices[2]);
-                }
-            }
-            else
-            {
-                final_t.Add(final_v.Count);
-                final_v.Add(vertices[0]);
+            //    int v1_idx = final_v.FindIndex(v => v == vertices[1]);
+            //    if (v1_idx != -1)
+            //        final_t.Add(v1_idx);
+            //    else
+            //    {
+            //        final_t.Add(final_v.Count);
+            //        final_v.Add(vertices[1]);
+            //    }
 
-                final_t.Add(final_v.Count);
-                final_v.Add(vertices[1]);
+            //    int v2_idx = final_v.FindIndex(v => v == vertices[2]);
+            //    if (v2_idx != -1)
+            //        final_t.Add(v2_idx);
+            //    else
+            //    {
+            //        final_t.Add(final_v.Count);
+            //        final_v.Add(vertices[2]);
+            //    }
+            //}
+            //else
+            //{
 
-                final_t.Add(final_v.Count);
-                final_v.Add(vertices[2]);
-            }
+            //final_v[p.x + p.y * (resolution.x - 1) + p.z * (resolution.y - 1) * (resolution.z - 1)].Add(vertices[0]);
+            //final_v[p.x + p.y * (resolution.x - 1) + p.z * (resolution.y - 1) * (resolution.z - 1)].Add(vertices[1]);
+            //final_v[p.x + p.y * (resolution.x - 1) + p.z * (resolution.y - 1) * (resolution.z - 1)].Add(vertices[2]);
+
+
+            // print(p.x + p.y * (resolution.x-1) + p.z * (resolution.y-1) * (resolution.z-1));
+            final_t.Add(final_v.Count);
+            final_v.Add(vertices[0]);
+
+            final_t.Add(final_v.Count);
+            final_v.Add(vertices[1]);
+
+            final_t.Add(final_v.Count);
+            final_v.Add(vertices[2]);
+            //}
         }
-
     }
 
     void Reconstruct()
@@ -502,35 +513,78 @@ public class MarchingCubes : MonoBehaviour
 
         r_i = 0;
 
-        while (r_i < (resolution.x - 1) * (resolution.y - 1) * (resolution.z - 1))
-        {
-            int x = Mathf.FloorToInt(r_i / ((resolution.y - 1) * (resolution.z - 1)));
-            int y = Mathf.FloorToInt((r_i - x * ((resolution.y - 1) * (resolution.z - 1))) / (resolution.z - 1));
-            int z = Mathf.FloorToInt(r_i - x * ((resolution.y - 1) * (resolution.z - 1)) - y * (resolution.z - 1));
-            Vector3Int curr_v = new Vector3Int(x, y, z);
-            // print(curr_v);
-            DrawCell(curr_v);
+        //while (r_i < (resolution.x - 1) * (resolution.y - 1) * (resolution.z - 1))
+        //{
 
-            // gameObject.GetComponent<MeshFilter>().mesh = mesh;
-            r_i += 1;
-            // Debug.Log(String.Format("{0}/{1}", r_i, resolution.x * resolution.y * resolution.z));
-            // Debug.Log(Time.deltaTime * resolution.x * resolution.y * resolution.z);
+        for(int i=0; i< (resolution.x); i++)
+        {
+            for (int j = 0; j < (resolution.y); j++)
+            {
+                for (int k = 0; k < (resolution.z); k++)
+                {
+                    DrawCell(new Vector3Int(i, j, k));
+                }
+            }
         }
+        //Parallel.For(0, (resolution.x - 1), i =>
+        //{
+        //    Parallel.For(0, (resolution.y - 1), j =>
+        //    {
+        //        Parallel.For(0, (resolution.z - 1), k =>
+        //        {
+        //            DrawCell(new Vector3Int(i, j, k));
+        //        });
+        //    });
+        //    //int x = Mathf.FloorToInt(i / ((resolution.y - 1) * (resolution.z - 1)));
+        //    //int y = Mathf.FloorToInt((i - x * ((resolution.y - 1) * (resolution.z - 1))) / (resolution.z - 1));
+        //    //int z = Mathf.FloorToInt(i - x * ((resolution.y - 1) * (resolution.z - 1)) - y * (resolution.z - 1));
+        //    //Vector3Int curr_v = new Vector3Int(x, y, z);
+        //    //DrawCell(curr_v);
+        //    //// r_i += 1;
+        //});
+        //}
+        //List<Vector3> vertices = new List<Vector3>();
+        //for(int i=0; i<final_v.Length; i++)
+        //{
+        //    for (int j = 0; j < final_v[i].Count; j++)
+        //    {
+        //        vertices.Add(final_v[i][j]);
+        //    }
+
+        //}
+
+        //mesh.vertices = vertices.ToArray();
+        //mesh.triangles = new int[mesh.vertices.Length];
+
+        //for (int i = 0; i < mesh.vertices.Length; i++)
+        //{
+        //    mesh.triangles[i] = i;
+        //}
+
         mesh.vertices = final_v.ToArray();
         mesh.triangles = final_t.ToArray();
-        
+
         mesh.RecalculateNormals();
         gameObject.GetComponent<MeshFilter>().mesh = mesh;
 
-        CanvasUI.VerticesCount.text = final_v.Count.ToString(); 
-        CanvasUI.TrianglesCount.text = (final_t.Count/3).ToString();
+        // CanvasUI.VerticesCount.text = final_v.Count.ToString(); 
+        // CanvasUI.TrianglesCount.text = (final_t.Count/3).ToString();
 
         final_v.Clear();
         final_t.Clear();
 
         print("RECON");
     }
-
+    void SaveAsset()
+    {
+        var mf = gameObject.GetComponent<MeshFilter>();
+        if (mf)
+        {
+            var savePath = "Assets/" + threshold.ToString() + ".asset";
+            Debug.Log("Saved Mesh to:" + savePath);
+            AssetDatabase.CreateAsset(mf.mesh, savePath);
+        }
+    }
     // Start is called before the first frame update
     void Start()
     {
@@ -559,6 +613,8 @@ public class MarchingCubes : MonoBehaviour
 
         threshold = Mathf.RoundToInt(CanvasUI.getThresholdSliderValue() * 255f);
 
+        Vector3Int test_cell = Vector3Int.zero;
+        
 
         for (int i=0; i<256; i++)
         {
@@ -600,24 +656,40 @@ public class MarchingCubes : MonoBehaviour
         }
 
         Debug.Log(TriangulationTable.Length);
-        sampleBuffer = new float[resolution.x][][];
+        sampleBuffer = new float[resolution.x+1][][];
         Vector3Int curr = Vector3Int.zero;
-        for (int i = 0; i < resolution.x; i++)
+
+        float start = Time.realtimeSinceStartup;
+        for (int i = 0; i < resolution.x+1; i++)
         {
             curr.x = i;
-            sampleBuffer[i] = new float[resolution.y][];
-            for (int j = 0; j < resolution.y; j++)
+            sampleBuffer[i] = new float[resolution.y+1][];
+            for (int j = 0; j < resolution.y+1; j++)
             {
                 curr.y = j;
-                sampleBuffer[i][j] = new float[resolution.z];
-                for (int k = 0; k < resolution.z; k++)
+                sampleBuffer[i][j] = new float[resolution.z+1];
+                for (int k = 0; k < resolution.z+1; k++)
                 {
                     curr.z = k;
-                    sampleBuffer[i][j][k] = trilinear(curr);
+                    // sampleBuffer[i][j][k] = trilinear(curr, data, resolution, data_dim);
                 }
             }
         }
 
+        Parallel.For(0, resolution.x, i => 
+        {
+            Parallel.For(0, resolution.y, j =>
+            {
+                Parallel.For(0, resolution.z, k =>
+                {
+                    Vector3Int curr_p = new Vector3Int(i, j, k);
+                    sampleBuffer[i][j][k] = trilinear(curr_p, data, resolution, data_dim);
+                    // print(String.Format("{0},{1},{2}",i,j,k));
+                });
+            });
+        });
+        float end = Time.realtimeSinceStartup;
+        print(end - start);
 
         Reconstruct();
         
@@ -631,7 +703,11 @@ public class MarchingCubes : MonoBehaviour
         if(threshold != NewThresholdValue)
         {
             threshold = NewThresholdValue;
+            float start = Time.realtimeSinceStartup;
             Reconstruct();
+
+            float end = Time.realtimeSinceStartup;
+            print(end - start);
         }
 
         if(SmoothNormalSaved != SmoothNormal)
