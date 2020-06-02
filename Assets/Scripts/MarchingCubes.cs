@@ -14,7 +14,7 @@ public class MarchingCubes : MonoBehaviour
     Vector3Int data_dim;
     private int[][][] data;
     public Vector3Int resolution;
-    Material mat;
+    Material mat, StdMat;
     public float threshold = .5f;
     public bool SmoothNormal = false;
     bool SmoothNormalSaved = false;
@@ -608,18 +608,21 @@ public class MarchingCubes : MonoBehaviour
     {
         dataLoader = GetComponent<DataLoader>();
         dataLoader.loadData();
-        Tex3D = dataLoader.getTex3D();
+        // resolution = dataLoader.getOriginalDim();
         dataLoader.extendRange();
+        
         data_dim = dataLoader.getDim();
+        resolution = (data_dim - Vector3Int.one) / 2;
         data = dataLoader.getData();
-        
-        
-        mat = Resources.Load("Materials/Standard", typeof(Material)) as Material;
+        Tex3D = dataLoader.getTex3D();
+
+        StdMat = Resources.Load("Materials/Standard", typeof(Material)) as Material;
+        mat = Resources.Load("Materials/Error", typeof(Material)) as Material;
         mat.SetTexture("_Volume", Tex3D);
         mat.SetFloat("_Threshold", threshold);
         
         MeshRenderer mr = gameObject.AddComponent<MeshRenderer>();
-        mr.material = mat;
+        mr.material = StdMat;
 
         final_v = new List<Vector3>();
         final_t = new List<int>();
@@ -732,6 +735,17 @@ public class MarchingCubes : MonoBehaviour
             SmoothNormalSaved = SmoothNormal;
             Reconstruct();
         }
+
+        mat.SetVector("_Position", transform.position);
     }
 
+    public void SetMatToStandard()
+    {
+        gameObject.GetComponent<MeshRenderer>().material = StdMat;
+    }
+
+    public void SetMatToError()
+    {
+        gameObject.GetComponent<MeshRenderer>().material = mat;
+    }
 }

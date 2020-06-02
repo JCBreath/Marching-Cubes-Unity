@@ -21,7 +21,7 @@ public class DataLoader : MonoBehaviour
         data = new int[data_dim.x][][];
         voxels = new Dictionary<Vector3, float>();
         Vector3 curr = Vector3.zero;
-        Vector3 center = Vector3.one * (data_dim.x - 1)/2f;
+        Vector3 center = Vector3.one * (data_dim.x - 1) / 2f;
 
         float start = Time.realtimeSinceStartup;
         Parallel.For(0, data_dim.x, i =>
@@ -84,15 +84,15 @@ public class DataLoader : MonoBehaviour
         //return texture;
 
         tex = new Texture3D(data_dim.x, data_dim.y, data_dim.z, TextureFormat.RGBA32, true);
-
         for (int i = 0; i < data_dim.x; i++)
         {
             for (int j = 0; j < data_dim.y; j++)
             {
                 for (int k = 0; k < data_dim.z; k++)
                 {
-                    int val = raw_data[i + data_dim.y * j + data_dim.y * data_dim.z * k];
-                    tex.SetPixel(i, j, k, new Color(val/255f, 0, 0, 1));
+                    // int val = raw_data[i + data_dim.y * j + data_dim.y * data_dim.z * k];
+                    int val = data[i][j][k];
+                    tex.SetPixel(i, j, k, new Color(val / 255f, 0, 0, 1));
                 }
             }
         }
@@ -107,9 +107,9 @@ public class DataLoader : MonoBehaviour
 
     public void loadData()
     {
-        raw_data = File.ReadAllBytes("Assets/Resources/Datasets/"+file_name+".raw");
-        
-        
+        raw_data = File.ReadAllBytes("Assets/Resources/Datasets/" + file_name + ".raw");
+
+
     }
 
     public void extendRange()

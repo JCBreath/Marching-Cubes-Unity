@@ -9,6 +9,7 @@ public class UI : MonoBehaviour
     private float ThresholdSliderValue;
     public Text TrianglesCount;
     public Text VerticesCount;
+    public Button ToggleError;
 
     public float getThresholdSliderValue()
     {
@@ -19,6 +20,7 @@ public class UI : MonoBehaviour
     void Start()
     {
         ThresholdSlider.onValueChanged.AddListener(delegate { ValueChangeCheck(); });
+        ToggleError.onClick.AddListener(ToggleErrorVis);
     }
 
     // Update is called once per frame
@@ -29,5 +31,21 @@ public class UI : MonoBehaviour
     public void ValueChangeCheck()
     {
         ThresholdSliderValue = ThresholdSlider.value;
+    }
+
+    public void ToggleErrorVis()
+    {
+        Text text = ToggleError.transform.GetChild(0).gameObject.GetComponent<Text>();
+        if (text.text == "Show Error")
+        {
+            text.text = "Hide Error";
+            GameObject.Find("DataVis").GetComponent<MarchingCubes>().SetMatToError();
+        }
+        else
+        {
+            text.text = "Show Error";
+            GameObject.Find("DataVis").GetComponent<MarchingCubes>().SetMatToStandard();
+        }
+            
     }
 }
