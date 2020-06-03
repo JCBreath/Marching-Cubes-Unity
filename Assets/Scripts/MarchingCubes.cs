@@ -14,6 +14,17 @@ public class MarchingCubes : MonoBehaviour
     Vector3Int data_dim;
     private int[][][] data;
     public Vector3Int resolution;
+
+
+    public enum ComputeMethod
+    {
+        CPUReuseEdge,
+        CPUParallel,
+        GPUParallel
+    };
+
+    public ComputeMethod computeMethod;
+
     Material mat, StdMat;
     public float threshold = .5f;
     public bool SmoothNormal = false;
@@ -286,34 +297,34 @@ public class MarchingCubes : MonoBehaviour
     };
     private int[][] EdgeTable;
     private DataLoader dataLoader;
+    private MCGPU mcGPU;
 
     private int[][][] cellConfig;
     private float[][][] sampleBuffer;
     private Vector3Int[][][] cellVertices;
-    private Vector3[][][][] cellEdges;
+    private int[][][][] cellEdges;
+    private int[][][] vertexIndices;
 
     Mesh mesh;
     private List<Vector3> final_v;
     private List<int> final_t;
+    private List<Triangle> tri_list;
+    private object _sync = new object();
 
     GameObject Canvas;
     UI CanvasUI;
     Vector3Int test_cell;
 
     Texture3D Tex3D;
+    private int ReuseCount;
+    private int FailCount;
+    private int CalcCount;
 
-    public struct TJob : IJob
+    public float actual_proc_time;
+
+    public struct Triangle
     {
-        public Vector3Int p;
-        public int[][][] data;
-        public float[][][] buffer;
-        public Vector3Int resolution;
-        public Vector3Int data_dim;
-
-        public void Execute()
-        {
-            buffer[p.x][p.y][p.z] = trilinear(p, data, resolution, data_dim);
-        }
+        public Vector3 [] v;
     }
 
     Vector3 VoxToWorld(Vector3 p_vox)
@@ -373,158 +384,181 @@ public class MarchingCubes : MonoBehaviour
 
         return qxyz;
     }
-
+    Vector3Int getVertex(int i, Vector3Int p)
+    {
+        if (i == 0)
+        {
+            return p;
+        }
+        else if (i == 1)
+        {
+            return cellVertices[p.x + 1][p.y][p.z];
+        }
+        else if (i == 2)
+        {
+            return cellVertices[p.x + 1][p.y + 1][p.z];
+        }
+        else if (i == 3)
+        {
+            return cellVertices[p.x][p.y + 1][p.z];
+        }
+        else if (i == 4)
+        {
+            return cellVertices[p.x][p.y][p.z + 1];
+        }
+        else if (i == 5)
+        {
+            return cellVertices[p.x + 1][p.y][p.z + 1];
+        }
+        else if (i == 6)
+        {
+            return cellVertices[p.x + 1][p.y + 1][p.z + 1];
+        }
+        else if (i == 7)
+        {
+            return cellVertices[p.x][p.y + 1][p.z + 1];
+        }
+        return Vector3Int.zero;
+    }
+    Vector3 lerpEdge(int[] edge, Vector3Int p)
+    {
+        Vector3Int c0, c1;
+        c0 = getVertex(edge[0], p);
+        c1 = getVertex(edge[1], p);
+        return Vector3.Lerp(c0, c1, (threshold - getBuffer(c0)) / (getBuffer(c1) - getBuffer(c0)));
+    }
     void DrawCell(Vector3Int p)
     {
-        //Vector3Int[] cell = new Vector3Int[8];
-        //// cell[0] = new Vector3Int(p.x, p.y, p.z);
-        //cell[0] = p;
-        //cell[1] = cellVertices[p.x + 1][p.y][p.z];
-        //cell[2] = cellVertices[p.x + 1][p.y + 1][p.z];
-        //cell[3] = cellVertices[p.x][p.y + 1][p.z];
-        //cell[4] = cellVertices[p.x][p.y][p.z + 1];
-        //cell[5] = cellVertices[p.x + 1][p.y][p.z + 1];
-        //cell[6] = cellVertices[p.x + 1][p.y + 1][p.z + 1];
-        //cell[7] = cellVertices[p.x][p.y + 1][p.z + 1];
-
-        Vector3Int getVertex(int i)
+        int reuseEdge(int edge_idx)
         {
-            if(i == 0)
+            int edge = -1;
+            int edge_0 = -1;
+            int edge_1 = -1;
+            int edge_2 = -1;
+            if (p.x > 0)
             {
-                return p;
+                if (edge_idx == 3)
+                    edge_0 = cellEdges[p.x - 1][p.y][p.z][1];
+                else if (edge_idx == 7)
+                    edge_0 = cellEdges[p.x - 1][p.y][p.z][5];
+                else if(edge_idx == 8)
+                    edge_0 = cellEdges[p.x - 1][p.y][p.z][9];
+                else if (edge_idx == 11)
+                    edge_0 = cellEdges[p.x - 1][p.y][p.z][10];
             }
-            else if(i == 1)
-            {
-                return cellVertices[p.x + 1][p.y][p.z];
-            }
-            else if (i == 2)
-            {
-                return cellVertices[p.x + 1][p.y + 1][p.z];
-            }
-            else if (i == 3)
-            {
-                return cellVertices[p.x][p.y + 1][p.z];
-            }
-            else if (i == 4)
-            {
-                return cellVertices[p.x][p.y][p.z + 1];
-            }
-            else if (i == 5)
-            {
-                return cellVertices[p.x + 1][p.y][p.z + 1];
-            }
-            else if (i == 6)
-            {
-                return cellVertices[p.x + 1][p.y + 1][p.z + 1];
-            }
-            else if (i == 7)
-            {
-                return cellVertices[p.x][p.y + 1][p.z + 1];
-            }
-            return Vector3Int.zero;
-        }
 
-        // cell[1] = new Vector3Int(p.x + 1, p.y, p.z);
-        //cell[2] = new Vector3Int(p.x + 1, p.y + 1, p.z);
-        //cell[3] = new Vector3Int(p.x, p.y + 1, p.z);
-        //cell[4] = new Vector3Int(p.x, p.y, p.z + 1);
-        //cell[5] = new Vector3Int(p.x + 1, p.y, p.z + 1);
-        //cell[6] = new Vector3Int(p.x + 1, p.y + 1, p.z + 1);
-        //cell[7] = new Vector3Int(p.x, p.y + 1, p.z + 1);
+            if (p.y > 0)
+            {
+                if (edge_idx == 0)
+                    edge_1 = cellEdges[p.x][p.y-1][p.z][2];
+                else if (edge_idx == 4)
+                    edge_1 = cellEdges[p.x][p.y-1][p.z][6];
+                else if (edge_idx == 8)
+                    edge_1 = cellEdges[p.x][p.y - 1][p.z][11];
+                else if (edge_idx == 9)
+                    edge_1 = cellEdges[p.x][p.y-1][p.z][10];
+            }
+
+            if (p.z > 0)
+            {
+                if (edge_idx == 0)
+                    edge_2 = cellEdges[p.x][p.y][p.z - 1][4];
+                else if (edge_idx == 1)
+                    edge_2 = cellEdges[p.x][p.y][p.z-1][5];
+                else if (edge_idx == 2)
+                    edge_2 = cellEdges[p.x][p.y][p.z-1][6];
+                else if (edge_idx == 3)
+                    edge_2 = cellEdges[p.x][p.y][p.z - 1][7];
+            }
+            edge = Math.Max(edge_0, Math.Max(edge_1, edge_2));
+
+            if (edge == -1)
+            {
+                CalcCount++;
+            }
+                
+            return edge;
+        }
 
         int cube_index = cellConfig[p.x][p.y][p.z];
 
-        //final_v[p.x + p.y * (resolution.x-1) + p.z * (resolution.y-1) * (resolution.z-1)] = new List<Vector3>();
-        // print(p.x);
-
         int tri_num = TriangulationTable[cube_index].Length;
 
-        if (tri_num == 0) { return; }
         
-
         for (int t_i = 0; t_i < tri_num; t_i++)
         {
-            Vector3[] vertices = new Vector3[3];
-            
-            Vector3Int c0, c1;
-            int[] edge;
-
             Vector3Int triangle = TriangulationTable[cube_index][t_i];
+            Triangle tri = new Triangle();
+            tri.v = new Vector3[3];
 
-            edge = EdgeTable[triangle[0]];
-            c0 = getVertex(edge[0]);
-            c1 = getVertex(edge[1]);
-            vertices[0] = Vector3.Lerp(c0, c1, (threshold - getBuffer(c0)) / (getBuffer(c1) - getBuffer(c0)));
-            
+            for(int i=0; i<3; i++)
+            {
+                // vertices[i] = reuseEdge(triangle[i]);
+                // if (vertices[i].x == 0f && vertices[i].y == 0f && vertices[i].z == 0f)
+                //Vector3 vertex;
+                int v_i = reuseEdge(triangle[i]);
+                if (v_i == -1)
+                {
+                    //vertex = lerpEdge(EdgeTable[triangle[i]]);
+                    //int idx = final_v.FindIndex(v => v == vertex);
+                    //if (idx != -1)
+                    //    final_t.Add(idx);
+                    //else
+                    //{
+                    //    final_t.Add(final_v.Count);
+                    //    final_v.Add(vertex);
+                    //}
+                    //cellEdges[p.x][p.y][p.z][triangle[i]] = final_v.Count - 1;
 
-            edge = EdgeTable[triangle[1]];
-            c0 = getVertex(edge[0]);
-            c1 = getVertex(edge[1]);
 
-            vertices[1] = Vector3.Lerp(c0, c1, (threshold - getBuffer(c0)) / (getBuffer(c1) - getBuffer(c0)));
-            
-
-            edge = EdgeTable[triangle[2]];
-            c0 = getVertex(edge[0]);
-            c1 = getVertex(edge[1]);
-            vertices[2] = Vector3.Lerp(c0, c1, (threshold - getBuffer(c0)) / (getBuffer(c1) - getBuffer(c0)));
+                    FailCount++;
+                    cellEdges[p.x][p.y][p.z][triangle[i]] = final_v.Count;
+                    final_t.Add(final_v.Count);
+                    float t_0 = Time.realtimeSinceStartup;
+                    final_v.Add(lerpEdge(EdgeTable[triangle[i]], p));
+                    actual_proc_time += Time.realtimeSinceStartup - t_0;
+                }
+                else
+                {
+                    cellEdges[p.x][p.y][p.z][triangle[i]] = v_i;
+                    // vertices[i] = final_v[v_i];
+                    final_t.Add(v_i);
+                    ReuseCount++;
+                }
+            }
+            lock(_sync)
+            {
+                tri_list.Add(tri);
+            }
             
             //Change Scale
             //vertices[0] = new Vector3(vertices[0].x / resolution.x, vertices[0].y / resolution.y, vertices[0].z / resolution.z);
             //vertices[1] = new Vector3(vertices[1].x / resolution.x, vertices[1].y / resolution.y, vertices[1].z / resolution.z);
             //vertices[2] = new Vector3(vertices[2].x / resolution.x, vertices[2].y / resolution.y, vertices[2].z / resolution.z);
+        }
+    }
 
-            cellEdges[p.x][p.y][p.z][triangle[0]] = vertices[0];
-            cellEdges[p.x][p.y][p.z][triangle[1]] = vertices[1];
-            cellEdges[p.x][p.y][p.z][triangle[2]] = vertices[2];
+    void DrawCell_Parallel(Vector3Int p)
+    {
+        int cube_index = cellConfig[p.x][p.y][p.z];
 
-            //if(SmoothNormal)
-            //{
-            //    int v0_idx = final_v.FindIndex(v => v == vertices[0]);
-            //    if (v0_idx != -1)
-            //        final_t.Add(v0_idx);
-            //    else
-            //    {
-            //        final_t.Add(final_v.Count);
-            //        final_v.Add(vertices[0]);
-            //    }
-
-            //    int v1_idx = final_v.FindIndex(v => v == vertices[1]);
-            //    if (v1_idx != -1)
-            //        final_t.Add(v1_idx);
-            //    else
-            //    {
-            //        final_t.Add(final_v.Count);
-            //        final_v.Add(vertices[1]);
-            //    }
-
-            //    int v2_idx = final_v.FindIndex(v => v == vertices[2]);
-            //    if (v2_idx != -1)
-            //        final_t.Add(v2_idx);
-            //    else
-            //    {
-            //        final_t.Add(final_v.Count);
-            //        final_v.Add(vertices[2]);
-            //    }
-            //}
-            //else
-            //{
-
-            //final_v[p.x + p.y * (resolution.x - 1) + p.z * (resolution.y - 1) * (resolution.z - 1)].Add(vertices[0]);
-            //final_v[p.x + p.y * (resolution.x - 1) + p.z * (resolution.y - 1) * (resolution.z - 1)].Add(vertices[1]);
-            //final_v[p.x + p.y * (resolution.x - 1) + p.z * (resolution.y - 1) * (resolution.z - 1)].Add(vertices[2]);
+        int tri_num = TriangulationTable[cube_index].Length;
 
 
-            // print(p.x + p.y * (resolution.x-1) + p.z * (resolution.y-1) * (resolution.z-1));
-            final_t.Add(final_v.Count);
-            final_v.Add(vertices[0]);
+        for (int t_i = 0; t_i < tri_num; t_i++)
+        {
+            Vector3Int triangle = TriangulationTable[cube_index][t_i];
+            Triangle tri = new Triangle();
+            tri.v = new Vector3[3];
+            for (int i = 0; i < 3; i++)
+            {
 
-            final_t.Add(final_v.Count);
-            final_v.Add(vertices[1]);
-
-            final_t.Add(final_v.Count);
-            final_v.Add(vertices[2]);
-            //}
+                tri.v[i] = lerpEdge(EdgeTable[triangle[i]], p);
+                lock (_sync)
+                {
+                    tri_list.Add(tri);
+                }
+            }
         }
     }
 
@@ -533,65 +567,152 @@ public class MarchingCubes : MonoBehaviour
         mesh = new Mesh();
         mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
 
-        cellConfig = new int[resolution.x][][];
-        Parallel.For(0, resolution.x, i =>
-        // for (int i = 0; i < (resolution.x); i++)
-        {
-            cellConfig[i] = new int[resolution.y][];
-            // Parallel.For(0, resolution.y, j =>
-            for (int j = 0; j < (resolution.y); j++)
-            {
-                cellConfig[i][j] = new int[resolution.z];
-                // Parallel.For(0, resolution.z, k =>
-                for (int k = 0; k < (resolution.z); k++)
-                {
-                    int cube_index = 0;
-                    if (getBufferXYZ(i, j, k) < threshold) { cube_index += 1; }
-                    if (getBufferXYZ(i + 1, j, k) < threshold) { cube_index += 2; }
-                    if (getBufferXYZ(i + 1, j + 1, k) < threshold) { cube_index += 4; }
-                    if (getBufferXYZ(i, j + 1, k) < threshold) { cube_index += 8; }
-                    if (getBufferXYZ(i, j, k + 1) < threshold) { cube_index += 16; }
-                    if (getBufferXYZ(i + 1, j, k + 1) < threshold) { cube_index += 32; }
-                    if (getBufferXYZ(i + 1, j + 1, k + 1) < threshold) { cube_index += 64; }
-                    if (getBufferXYZ(i, j + 1, k + 1) < threshold) { cube_index += 128; }
-                    cellConfig[i][j][k] = cube_index;
-                }
-            }
-        });
+        actual_proc_time = 0f;
 
-        // TriangulationTable[cube_index].Length
-
-        for (int i=0; i< (resolution.x); i++)
+        if(computeMethod != ComputeMethod.GPUParallel)
         {
-            for (int j = 0; j < (resolution.y); j++)
+            ReuseCount = 0;
+            FailCount = 0;
+            CalcCount = 0;
+
+            cellConfig = new int[resolution.x][][];
+
+            Parallel.For(0, resolution.x, i =>
+            // for (int i = 0; i < (resolution.x); i++)
             {
-                for (int k = 0; k < (resolution.z); k++)
+                cellConfig[i] = new int[resolution.y][];
+                for (int j = 0; j < (resolution.y); j++)
                 {
-                    if(TriangulationTable[cellConfig[i][j][k]].Length > 0)
+                    cellConfig[i][j] = new int[resolution.z];
+                    for (int k = 0; k < (resolution.z); k++)
                     {
-                        cellEdges[i][j][k] = new Vector3[12];
-                        DrawCell(new Vector3Int(i, j, k));
+                        int cube_index = 0;
+                        if (getBufferXYZ(i, j, k) < threshold) { cube_index += 1; }
+                        if (getBufferXYZ(i + 1, j, k) < threshold) { cube_index += 2; }
+                        if (getBufferXYZ(i + 1, j + 1, k) < threshold) { cube_index += 4; }
+                        if (getBufferXYZ(i, j + 1, k) < threshold) { cube_index += 8; }
+                        if (getBufferXYZ(i, j, k + 1) < threshold) { cube_index += 16; }
+                        if (getBufferXYZ(i + 1, j, k + 1) < threshold) { cube_index += 32; }
+                        if (getBufferXYZ(i + 1, j + 1, k + 1) < threshold) { cube_index += 64; }
+                        if (getBufferXYZ(i, j + 1, k + 1) < threshold) { cube_index += 128; }
+                        cellConfig[i][j][k] = cube_index;
+
                     }
-                        
+                }
+            });
+
+            if (computeMethod == ComputeMethod.CPUParallel)
+            {
+                Parallel.For(0, resolution.x, i =>
+                {
+                    for (int j = 0; j < (resolution.y); j++)
+                    {
+                        for (int k = 0; k < (resolution.z); k++)
+                        {
+                            if (TriangulationTable[cellConfig[i][j][k]].Length > 0)
+                            {
+                                // cellEdges[i][j][k] = new int[12] { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+                                DrawCell_Parallel(new Vector3Int(i, j, k));
+                            }
+
+                        }
+                    }
+                });
+
+
+                Vector3[] vertices = new Vector3[tri_list.Count * 3];
+                int[] triangles = new int[tri_list.Count * 3];
+
+                // print(String.Format("v: {0}", tri_list[0].v[0]));
+                float t_0 = Time.realtimeSinceStartup;
+                Parallel.For(0, tri_list.Count, i =>
+                {
+                    for (int j = 0; j < 3; j++)
+                    {
+                        vertices[i * 3 + j] = tri_list[i].v[j];
+                        triangles[i * 3 + j] = i * 3 + j;
+                    }
+                });
+                actual_proc_time += Time.realtimeSinceStartup - t_0;
+                tri_list.Clear();
+                mesh.vertices = vertices;
+                mesh.triangles = triangles;
+            }
+            else
+            {
+                for (int i = 0; i < (resolution.x); i++)
+                {
+                    for (int j = 0; j < (resolution.y); j++)
+                    {
+                        for (int k = 0; k < (resolution.z); k++)
+                        {
+                            if (TriangulationTable[cellConfig[i][j][k]].Length > 0)
+                            {
+                                cellEdges[i][j][k] = new int[12] { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+                                DrawCell(new Vector3Int(i, j, k));
+                            }
+
+                        }
+                    }
+                }
+
+                mesh.vertices = final_v.ToArray();
+                mesh.triangles = final_t.ToArray();
+                final_v.Clear();
+                final_t.Clear();
+                print(String.Format("Calculated: {0}, Reuse: {1}, Fail: {2}", CalcCount, ReuseCount, FailCount));
+            }
+            mesh.RecalculateNormals();
+            transform.localScale = new Vector3(1f / resolution.x, 1f / resolution.y, 1f / resolution.z);
+        }
+        // USE GPU
+        else
+        {
+            List<Vector3> vertices = new List<Vector3>();
+            List<Vector3> normals = new List<Vector3>();
+            List<int> triangles = new List<int>();
+
+            int n_sec = Mathf.RoundToInt(Mathf.Pow(resolution.x / 64, 3));
+            for (int sec_i=0; sec_i < n_sec; sec_i++)
+            {
+                
+                float[] tri_data = mcGPU.ComputeSection(sec_i, n_sec, Vector3Int.one * resolution.x, Tex3D, threshold/255);
+                
+                int n = tri_data.Length / 6;
+
+                n = (n / 3) * 3;
+                for (int i = 0; i < n; i++)
+                {
+                    vertices.Add(new Vector3(tri_data[i * 6], tri_data[i * 6 + 1], tri_data[i * 6 + 2]));
+                    normals.Add(new Vector3(tri_data[i * 6 + 3], tri_data[i * 6 + 4], tri_data[i * 6 + 5]));
+                    triangles.Add(triangles.Count);
+                    i++;
+                    vertices.Add(new Vector3(tri_data[i * 6], tri_data[i * 6 + 1], tri_data[i * 6 + 2]));
+                    normals.Add(new Vector3(tri_data[i * 6 + 3], tri_data[i * 6 + 4], tri_data[i * 6 + 5]));
+                    triangles.Add(triangles.Count);
+                    i++;
+                    vertices.Add(new Vector3(tri_data[i * 6], tri_data[i * 6 + 1], tri_data[i * 6 + 2]));
+                    normals.Add(new Vector3(tri_data[i * 6 + 3], tri_data[i * 6 + 4], tri_data[i * 6 + 5]));
+                    triangles.Add(triangles.Count);
                 }
             }
+
+
+            mesh.vertices = vertices.ToArray();
+            mesh.normals = normals.ToArray();
+            mesh.triangles = triangles.ToArray();
+
+            vertices.Clear();
+            normals.Clear();
+            triangles.Clear();
+            transform.localScale = Vector3.one;
         }
 
+        CanvasUI.VerticesCount.text = String.Format("Vertices Count: {0}", mesh.vertices.Length);
+        CanvasUI.TrianglesCount.text = String.Format("Triangles Count: {0}", mesh.triangles.Length / 3);
+        print(string.Format("Actual Processing Time: {0}", actual_proc_time));
 
-        mesh.vertices = final_v.ToArray();
-        mesh.triangles = final_t.ToArray();
-
-        mesh.RecalculateNormals();
         gameObject.GetComponent<MeshFilter>().mesh = mesh;
-        transform.localScale = new Vector3(1f/resolution.x, 1f/resolution.y, 1f/resolution.z);
-
-        // CanvasUI.VerticesCount.text = final_v.Count.ToString(); 
-        // CanvasUI.TrianglesCount.text = (final_t.Count/3).ToString();
-
-        final_v.Clear();
-        final_t.Clear();
-
-        print("RECON");
     }
     void SaveAsset()
     {
@@ -606,13 +727,15 @@ public class MarchingCubes : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
+        mcGPU = GetComponent<MCGPU>();
         dataLoader = GetComponent<DataLoader>();
         dataLoader.loadData();
         // resolution = dataLoader.getOriginalDim();
         dataLoader.extendRange();
         
         data_dim = dataLoader.getDim();
-        resolution = (data_dim - Vector3Int.one) / 2;
+        resolution = (data_dim - Vector3Int.one) / 4;
+        // ChangeResolution(0.25f);
         data = dataLoader.getData();
         Tex3D = dataLoader.getTex3D();
 
@@ -626,6 +749,7 @@ public class MarchingCubes : MonoBehaviour
 
         final_v = new List<Vector3>();
         final_t = new List<int>();
+        tri_list = new List<Triangle>();
 
         Canvas = GameObject.Find("Canvas");
         CanvasUI = Canvas.GetComponent<UI>();
@@ -684,30 +808,30 @@ public class MarchingCubes : MonoBehaviour
 
         Debug.Log(TriangulationTable.Length);
 
-        sampleBuffer = new float[resolution.x+1][][];
+        sampleBuffer = new float[resolution.x + 1][][];
         cellVertices = new Vector3Int[resolution.x + 1][][];
-        cellEdges = new Vector3[resolution.x + 1][][][];
+        cellEdges = new int[resolution.x + 1][][][];
         float start = Time.realtimeSinceStartup;
-        Parallel.For(0, resolution.x+1, i => 
-        {
-            sampleBuffer[i] = new float[resolution.y + 1][];
-            cellVertices[i] = new Vector3Int[resolution.y + 1][];
-            cellEdges[i] = new Vector3[resolution.y + 1][][];
+        Parallel.For(0, resolution.x + 1, i =>
+          {
+              sampleBuffer[i] = new float[resolution.y + 1][];
+              cellVertices[i] = new Vector3Int[resolution.y + 1][];
+              cellEdges[i] = new int[resolution.y + 1][][];
             //Parallel.For(0, resolution.y+1, j =>
-            for (int j=0; j<resolution.y+1; j++)    
-            {
-                sampleBuffer[i][j] = new float[resolution.z + 1];
-                cellVertices[i][j] = new Vector3Int[resolution.z + 1];
-                cellEdges[i][j] = new Vector3[resolution.z + 1][];
+            for (int j = 0; j < resolution.y + 1; j++)
+              {
+                  sampleBuffer[i][j] = new float[resolution.z + 1];
+                  cellVertices[i][j] = new Vector3Int[resolution.z + 1];
+                  cellEdges[i][j] = new int[resolution.z + 1][];
                 // Parallel.For(0, resolution.z+1, k =>
-                for (int k=0; k<resolution.z+1; k++)
-                {
-                    Vector3Int curr_p = new Vector3Int(i, j, k);
-                    sampleBuffer[i][j][k] = trilinear(curr_p, data, resolution, data_dim);
-                    cellVertices[i][j][k] = new Vector3Int(i, j, k);
-                }
-            }
-        });
+                for (int k = 0; k < resolution.z + 1; k++)
+                  {
+                      Vector3Int curr_p = new Vector3Int(i, j, k);
+                      sampleBuffer[i][j][k] = trilinear(curr_p, data, resolution, data_dim);
+                      cellVertices[i][j][k] = new Vector3Int(i, j, k);
+                  }
+              }
+          });
         print(string.Format("Interpolation Time: {0}", Time.realtimeSinceStartup - start));
 
 
@@ -747,5 +871,42 @@ public class MarchingCubes : MonoBehaviour
     public void SetMatToError()
     {
         gameObject.GetComponent<MeshRenderer>().material = mat;
+    }
+
+    public void ChangeResolution(float scale)
+    {
+        resolution.x = Mathf.FloorToInt((data_dim.x - 1) * scale);
+        resolution.y = Mathf.FloorToInt((data_dim.y - 1) * scale);
+        resolution.z = Mathf.FloorToInt((data_dim.z - 1) * scale);
+        print(String.Format("Resolution Changed to: {0}", resolution));
+
+        sampleBuffer = new float[resolution.x + 1][][];
+        cellVertices = new Vector3Int[resolution.x + 1][][];
+        cellEdges = new int[resolution.x + 1][][][];
+        float start = Time.realtimeSinceStartup;
+        Parallel.For(0, resolution.x + 1, i =>
+        {
+            sampleBuffer[i] = new float[resolution.y + 1][];
+            cellVertices[i] = new Vector3Int[resolution.y + 1][];
+            cellEdges[i] = new int[resolution.y + 1][][];
+            //Parallel.For(0, resolution.y+1, j =>
+            for (int j = 0; j < resolution.y + 1; j++)
+            {
+                sampleBuffer[i][j] = new float[resolution.z + 1];
+                cellVertices[i][j] = new Vector3Int[resolution.z + 1];
+                cellEdges[i][j] = new int[resolution.z + 1][];
+                // Parallel.For(0, resolution.z+1, k =>
+                for (int k = 0; k < resolution.z + 1; k++)
+                {
+                    Vector3Int curr_p = new Vector3Int(i, j, k);
+                    sampleBuffer[i][j][k] = trilinear(curr_p, data, resolution, data_dim);
+                    cellVertices[i][j][k] = new Vector3Int(i, j, k);
+                }
+            }
+        });
+        print(string.Format("Interpolation Time: {0}", Time.realtimeSinceStartup - start));
+        start = Time.realtimeSinceStartup;
+        Reconstruct();
+        print(string.Format("Reconstruction Time: {0}", Time.realtimeSinceStartup - start));
     }
 }
