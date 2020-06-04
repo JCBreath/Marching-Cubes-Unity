@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
 
+
 public class MCGPU : MonoBehaviour
 {
     private DataLoader dataLoader;
@@ -21,20 +22,24 @@ public class MCGPU : MonoBehaviour
         kernelMC = MarchingCubesCS.FindKernel("MarchingCubes");
     }
 
-    public float[] ComputeSection(int idx, int n_div, Vector3Int resolution, Texture3D tex3D, float threshold)
+    // public float[] ComputeSection(int idx, int n_div, Vector3Int resolution, Texture3D tex3D, float threshold)
+    public ComputeBuffer ComputeSection(int idx, int step_size, Vector3Int resolution, Texture3D tex3D, float threshold)
     {
         // Size of struct Triangle is (3 v_pos's + 3 norm_vec's) * 3 v's = 18 floats
-        ComputeBuffer appendVertexBuffer = new ComputeBuffer((resolution.x) * (resolution.y) * (resolution.z) * 5 / n_div, sizeof(float) * 18, ComputeBufferType.Append);
+        //ComputeBuffer appendVertexBuffer = new ComputeBuffer((resolution.x) * (resolution.y) * (resolution.z) * 5 / n_div, sizeof(float) * 18, ComputeBufferType.Append);
+        ComputeBuffer appendVertexBuffer = new ComputeBuffer(resolution.x * resolution.y * step_size * 5, sizeof(float) * 18, ComputeBufferType.Append);
         ComputeBuffer argBuffer = new ComputeBuffer(4, sizeof(int), ComputeBufferType.IndirectArguments);
         MarchingCubesCS.SetInt("_gridSize", resolution.x); // THIS IS TEMPORARY
         MarchingCubesCS.SetFloat("_isoLevel", threshold);
-        MarchingCubesCS.SetInts("_idOffset", new int[3] { 0, 0, idx * resolution.z / n_div }); // nth Section
+        // MarchingCubesCS.SetInts("_idOffset", new int[3] { 0, 0, idx * Mathf.FloorToInt(resolution.z / n_div) }); // nth Section
+        MarchingCubesCS.SetInts("_idOffset", new int[3] { 0, 0, idx });
 
         MarchingCubesCS.SetBuffer(kernelMC, "triangleRW", appendVertexBuffer);
         MarchingCubesCS.SetTexture(kernelMC, "_densityTexture", tex3D);
         appendVertexBuffer.SetCounterValue(0);
         float t_0 = Time.realtimeSinceStartup;
-        MarchingCubesCS.Dispatch(kernelMC, resolution.x, resolution.y, resolution.z / n_div);
+        // MarchingCubesCS.Dispatch(kernelMC, resolution.x, resolution.y, Mathf.FloorToInt(resolution.z / n_div));
+        MarchingCubesCS.Dispatch(kernelMC, resolution.x, resolution.y, step_size);
         gameObject.GetComponent<MarchingCubes>().actual_proc_time += Time.realtimeSinceStartup - t_0;
 
         int[] args = new int[] { 0, 1, 0, 0 };
@@ -45,13 +50,13 @@ public class MCGPU : MonoBehaviour
         argBuffer.GetData(args);
         args[0] *= 3;
 
-        float[] data = new float[args[0] * 6];
-        appendVertexBuffer.GetData(data, 0, 0, args[0] * 6);
+        //float[] data = new float[args[0] * 6];
+        //appendVertexBuffer.GetData(data, 0, 0, args[0] * 6);
 
-        appendVertexBuffer.Release();
+        // appendVertexBuffer.Release();
         argBuffer.Release();
 
-        return data;
+        return appendVertexBuffer;
     }
 
     // Start is called before the first frame update

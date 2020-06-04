@@ -6,7 +6,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Unity.Jobs;
-using UnityEditor;
 using UnityEngine;
 
 public class MarchingCubes : MonoBehaviour
@@ -24,6 +23,9 @@ public class MarchingCubes : MonoBehaviour
     };
 
     public ComputeMethod computeMethod;
+
+    private string[] DatasetNames;
+    private Vector3Int[] DatasetDims;
 
     Material mat, StdMat;
     public float threshold = .5f;
@@ -554,10 +556,11 @@ public class MarchingCubes : MonoBehaviour
             {
 
                 tri.v[i] = lerpEdge(EdgeTable[triangle[i]], p);
-                lock (_sync)
-                {
-                    tri_list.Add(tri);
-                }
+                
+            }
+            lock (_sync)
+            {
+                tri_list.Add(tri);
             }
         }
     }
@@ -662,6 +665,22 @@ public class MarchingCubes : MonoBehaviour
                 final_t.Clear();
                 print(String.Format("Calculated: {0}, Reuse: {1}, Fail: {2}", CalcCount, ReuseCount, FailCount));
             }
+
+            //Vector3[] normals = new Vector3[mesh.vertices.Length];
+            //for (int i = 0; i < normals.Length; i++)
+            //{
+            //    Vector3 v = mesh.vertices[i];
+            //    v.x /= resolution.x;
+            //    v.y /= resolution.y;
+            //    v.z /= resolution.z;
+            //    float nx = Tex3D.GetPixelBilinear(v.x-1, v.y, v.z).r - Tex3D.GetPixelBilinear(v.x + 1, v.y, v.z).r;
+            //    float ny = Tex3D.GetPixelBilinear(v.x, v.y-1, v.z).r - Tex3D.GetPixelBilinear(v.x, v.y+1, v.z).r;
+            //    float nz = Tex3D.GetPixelBilinear(v.x, v.y, v.z-1).r - Tex3D.GetPixelBilinear(v.x, v.y, v.z+1).r;
+
+            //    normals[i] = new Vector3(nx, ny, nz);
+            //}
+
+            //mesh.normals = normals;
             mesh.RecalculateNormals();
             transform.localScale = new Vector3(1f / resolution.x, 1f / resolution.y, 1f / resolution.z);
         }
@@ -671,13 +690,41 @@ public class MarchingCubes : MonoBehaviour
             List<Vector3> vertices = new List<Vector3>();
             List<Vector3> normals = new List<Vector3>();
             List<int> triangles = new List<int>();
-
-            int n_sec = Mathf.RoundToInt(Mathf.Pow(resolution.x / 64, 3));
-            for (int sec_i=0; sec_i < n_sec; sec_i++)
+            int n_sec;
+            if(resolution.x > 64)
             {
-                
-                float[] tri_data = mcGPU.ComputeSection(sec_i, n_sec, Vector3Int.one * resolution.x, Tex3D, threshold/255);
-                
+                n_sec = Mathf.RoundToInt(Mathf.Pow(resolution.x / 64, 3));
+            }
+            else
+            {
+                n_sec = 1;
+            }
+
+            //if(resolution.x == 302)
+            //{
+            //    n_sec = 2;
+            //}
+
+            float[] tri_data;
+
+            int step_size = resolution.z / n_sec;
+
+            // for (int sec_i=0; sec_i < n_sec; sec_i++)
+            for (int sec_i=0; sec_i<resolution.z; sec_i+=step_size)
+            {
+                ComputeBuffer cb = mcGPU.ComputeSection(sec_i, step_size, Vector3Int.one * resolution.x, Tex3D, threshold / 255);
+                // float[] tri_data = mcGPU.ComputeSection(sec_i, n_sec, Vector3Int.one * resolution.x, Tex3D, threshold/255);
+                ComputeBuffer argBuffer = new ComputeBuffer(4, sizeof(int), ComputeBufferType.IndirectArguments);
+                int[] args = new int[] { 0, 1, 0, 0 };
+                argBuffer.SetData(args);
+
+                ComputeBuffer.CopyCount(cb, argBuffer, 0);
+                argBuffer.GetData(args);
+                args[0] *= 3;
+                tri_data = new float[args[0] * 6];
+                cb.GetData(tri_data, 0, 0, args[0] * 6);
+                cb.Release();
+
                 int n = tri_data.Length / 6;
 
                 n = (n / 3) * 3;
@@ -695,6 +742,8 @@ public class MarchingCubes : MonoBehaviour
                     normals.Add(new Vector3(tri_data[i * 6 + 3], tri_data[i * 6 + 4], tri_data[i * 6 + 5]));
                     triangles.Add(triangles.Count);
                 }
+                tri_data = null;
+                GC.Collect();
             }
 
 
@@ -705,47 +754,65 @@ public class MarchingCubes : MonoBehaviour
             vertices.Clear();
             normals.Clear();
             triangles.Clear();
+
             transform.localScale = Vector3.one;
         }
 
+        cellConfig = null;
+
         CanvasUI.VerticesCount.text = String.Format("Vertices Count: {0}", mesh.vertices.Length);
         CanvasUI.TrianglesCount.text = String.Format("Triangles Count: {0}", mesh.triangles.Length / 3);
+        CanvasUI.ProcTime.text = String.Format("Processing Time: {0}", actual_proc_time);
+        
         print(string.Format("Actual Processing Time: {0}", actual_proc_time));
 
         gameObject.GetComponent<MeshFilter>().mesh = mesh;
     }
-    void SaveAsset()
-    {
-        var mf = gameObject.GetComponent<MeshFilter>();
-        if (mf)
-        {
-            var savePath = "Assets/" + threshold.ToString() + ".asset";
-            Debug.Log("Saved Mesh to:" + savePath);
-            AssetDatabase.CreateAsset(mf.mesh, savePath);
-        }
-    }
+    //void SaveAsset()
+    //{
+    //    var mf = gameObject.GetComponent<MeshFilter>();
+    //    if (mf)
+    //    {
+    //        var savePath = "Assets/" + threshold.ToString() + ".asset";
+    //        Debug.Log("Saved Mesh to:" + savePath);
+    //        AssetDatabase.CreateAsset(mf.mesh, savePath);
+    //    }
+    //}
     // Start is called before the first frame update
-    void Start()
+
+    void Init()
     {
-        mcGPU = GetComponent<MCGPU>();
-        dataLoader = GetComponent<DataLoader>();
         dataLoader.loadData();
         // resolution = dataLoader.getOriginalDim();
         dataLoader.extendRange();
-        
+
         data_dim = dataLoader.getDim();
         resolution = (data_dim - Vector3Int.one) / 4;
         // ChangeResolution(0.25f);
         data = dataLoader.getData();
         Tex3D = dataLoader.getTex3D();
 
-        StdMat = Resources.Load("Materials/Standard", typeof(Material)) as Material;
-        mat = Resources.Load("Materials/Error", typeof(Material)) as Material;
+        // mat = Resources.Load("Materials/Error", typeof(Material)) as Material;
         mat.SetTexture("_Volume", Tex3D);
         mat.SetFloat("_Threshold", threshold);
-        
+
+
+    }
+
+    void Start()
+    {
+        mcGPU = GetComponent<MCGPU>();
+        dataLoader = GetComponent<DataLoader>();
+
+        DatasetNames = new string[5] { "Neghip", "Bonsai", "Skull", "Nucleon", "Csafe" };
+        DatasetDims = new Vector3Int[5] { new Vector3Int(64, 64, 64), new Vector3Int(256, 256, 256), new Vector3Int(256, 256, 256), new Vector3Int(41, 41, 41), new Vector3Int(302, 302, 302) };
+
+        mat = Resources.Load("Materials/Error", typeof(Material)) as Material;
+        StdMat = Resources.Load("Materials/Standard", typeof(Material)) as Material;
+
         MeshRenderer mr = gameObject.AddComponent<MeshRenderer>();
         mr.material = StdMat;
+
 
         final_v = new List<Vector3>();
         final_t = new List<int>();
@@ -811,28 +878,33 @@ public class MarchingCubes : MonoBehaviour
         sampleBuffer = new float[resolution.x + 1][][];
         cellVertices = new Vector3Int[resolution.x + 1][][];
         cellEdges = new int[resolution.x + 1][][][];
-        float start = Time.realtimeSinceStartup;
-        Parallel.For(0, resolution.x + 1, i =>
-          {
-              sampleBuffer[i] = new float[resolution.y + 1][];
-              cellVertices[i] = new Vector3Int[resolution.y + 1][];
-              cellEdges[i] = new int[resolution.y + 1][][];
-            //Parallel.For(0, resolution.y+1, j =>
-            for (int j = 0; j < resolution.y + 1; j++)
-              {
-                  sampleBuffer[i][j] = new float[resolution.z + 1];
-                  cellVertices[i][j] = new Vector3Int[resolution.z + 1];
-                  cellEdges[i][j] = new int[resolution.z + 1][];
-                // Parallel.For(0, resolution.z+1, k =>
-                for (int k = 0; k < resolution.z + 1; k++)
-                  {
-                      Vector3Int curr_p = new Vector3Int(i, j, k);
-                      sampleBuffer[i][j][k] = trilinear(curr_p, data, resolution, data_dim);
-                      cellVertices[i][j][k] = new Vector3Int(i, j, k);
-                  }
-              }
-          });
-        print(string.Format("Interpolation Time: {0}", Time.realtimeSinceStartup - start));
+
+        Init();
+        ChangeResolution(0.25f);
+        
+
+        //float start = Time.realtimeSinceStartup;
+        //Parallel.For(0, resolution.x + 1, i =>
+        //  {
+        //      sampleBuffer[i] = new float[resolution.y + 1][];
+        //      cellVertices[i] = new Vector3Int[resolution.y + 1][];
+        //      cellEdges[i] = new int[resolution.y + 1][][];
+        //    //Parallel.For(0, resolution.y+1, j =>
+        //    for (int j = 0; j < resolution.y + 1; j++)
+        //      {
+        //          sampleBuffer[i][j] = new float[resolution.z + 1];
+        //          cellVertices[i][j] = new Vector3Int[resolution.z + 1];
+        //          cellEdges[i][j] = new int[resolution.z + 1][];
+        //        // Parallel.For(0, resolution.z+1, k =>
+        //        for (int k = 0; k < resolution.z + 1; k++)
+        //          {
+        //              Vector3Int curr_p = new Vector3Int(i, j, k);
+        //              sampleBuffer[i][j][k] = trilinear(curr_p, data, resolution, data_dim);
+        //              cellVertices[i][j][k] = new Vector3Int(i, j, k);
+        //          }
+        //      }
+        //  });
+        //print(string.Format("Interpolation Time: {0}", Time.realtimeSinceStartup - start));
 
 
 
@@ -852,6 +924,7 @@ public class MarchingCubes : MonoBehaviour
             float start = Time.realtimeSinceStartup;
             Reconstruct();
             print(string.Format("Reconstruction Time: {0}", Time.realtimeSinceStartup - start));
+            CanvasUI.RecoTime.text = String.Format("Reconstruction Time: {0}", Time.realtimeSinceStartup - start);
         }
 
         if(SmoothNormalSaved != SmoothNormal)
@@ -908,5 +981,28 @@ public class MarchingCubes : MonoBehaviour
         start = Time.realtimeSinceStartup;
         Reconstruct();
         print(string.Format("Reconstruction Time: {0}", Time.realtimeSinceStartup - start));
+    }
+
+    public void ChangeComputeMethod(int idx)
+    {
+        computeMethod = (ComputeMethod)idx;
+        float start = Time.realtimeSinceStartup;
+        Reconstruct();
+        CanvasUI.RecoTime.text = String.Format("Reconstruction Time: {0}", Time.realtimeSinceStartup - start);
+    }
+
+    public void ChangeDataset(int idx)
+    {
+        print(DatasetNames);
+        dataLoader.file_name = DatasetNames[idx];
+        dataLoader.data_dim = DatasetDims[idx];
+        
+        Init();
+        int NewThresholdValue = Mathf.RoundToInt(CanvasUI.getThresholdSliderValue() * 255f);
+        threshold = NewThresholdValue;
+        mat.SetFloat("_Threshold", threshold / 255f);
+        ChangeResolution(0.25f);
+        CanvasUI.ResDropdown.value = 0;
+        Reconstruct();
     }
 }
