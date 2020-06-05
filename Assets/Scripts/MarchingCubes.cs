@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -336,7 +337,8 @@ public class MarchingCubes : MonoBehaviour
 
     static Vector3 WorldToVox(Vector3 p_world, Vector3 resolution, Vector3 data_dim)
     {
-        return new Vector3(p_world.x / resolution.x * data_dim.x, p_world.y / resolution.y * data_dim.y, p_world.z / resolution.z * data_dim.z);
+        
+        return new Vector3(p_world.x / (resolution.x) * (data_dim.x), p_world.y / (resolution.y) * (data_dim.y), p_world.z / (resolution.z) * (data_dim.z));
     }
 
     static float lerp(float x1, float x2, float y1, float y2, float x)
@@ -690,10 +692,15 @@ public class MarchingCubes : MonoBehaviour
             List<Vector3> vertices = new List<Vector3>();
             List<Vector3> normals = new List<Vector3>();
             List<int> triangles = new List<int>();
+
+            //Vector3[] vertices;
+            //Vector3[] normals;
+            //int[] triangles;
+
             int n_sec;
-            if(resolution.x > 64)
+            if(resolution.x > 128)
             {
-                n_sec = Mathf.RoundToInt(Mathf.Pow(resolution.x / 64, 3));
+                n_sec = Mathf.RoundToInt(Mathf.Pow(resolution.x / 128, 3));
             }
             else
             {
@@ -708,53 +715,111 @@ public class MarchingCubes : MonoBehaviour
             float[] tri_data;
 
             int step_size = resolution.z / n_sec;
+            print(n_sec);
+            //float[] buffer = new float[0];
+            //Array buffer = new Array(0);
 
+            //float[][] tri_buffer = new float[n_sec][];
+            //int[] v_count = new int[n_sec];
+            //int sec_count = 0;
+            ComputeBuffer argBuffer = new ComputeBuffer(1, sizeof(int), ComputeBufferType.Raw);
+            int[] args = new int[1];
             // for (int sec_i=0; sec_i < n_sec; sec_i++)
             for (int sec_i=0; sec_i<resolution.z; sec_i+=step_size)
             {
+                
+                if (step_size > resolution.z - sec_i)
+                    step_size = resolution.z - sec_i;
                 ComputeBuffer cb = mcGPU.ComputeSection(sec_i, step_size, Vector3Int.one * resolution.x, Tex3D, threshold / 255);
                 // float[] tri_data = mcGPU.ComputeSection(sec_i, n_sec, Vector3Int.one * resolution.x, Tex3D, threshold/255);
-                ComputeBuffer argBuffer = new ComputeBuffer(4, sizeof(int), ComputeBufferType.IndirectArguments);
-                int[] args = new int[] { 0, 1, 0, 0 };
-                argBuffer.SetData(args);
+                
+                
+                // int[] args_set = new int[] { 0, 1, 0, 0 };
+                
+                // argBuffer.SetData(args_set);
+
 
                 ComputeBuffer.CopyCount(cb, argBuffer, 0);
+
+                //float t_0 = Time.realtimeSinceStartup;
                 argBuffer.GetData(args);
+                //actual_proc_time += Time.realtimeSinceStartup - t_0;
+                //print(Time.realtimeSinceStartup - t_0);
+                // argBuffer.Release();
+
                 args[0] *= 3;
+                
                 tri_data = new float[args[0] * 6];
+                
                 cb.GetData(tri_data, 0, 0, args[0] * 6);
+
                 cb.Release();
+
+                
 
                 int n = tri_data.Length / 6;
 
                 n = (n / 3) * 3;
-                for (int i = 0; i < n; i++)
+
+                //buffer = buffer.Concat(tri_data).ToArray();
+
+                //Vector3[] vs = new Vector3[n];
+                //Vector3[] ns = new Vector3[n];
+
+                //tri_buffer[sec_count] = tri_data;
+                //v_count[sec_count] = n;
+                
+                // Parallel.For(0, n/3, p_i =>
+                for (int i = 0; i < n; i += 3)
                 {
                     vertices.Add(new Vector3(tri_data[i * 6], tri_data[i * 6 + 1], tri_data[i * 6 + 2]));
                     normals.Add(new Vector3(tri_data[i * 6 + 3], tri_data[i * 6 + 4], tri_data[i * 6 + 5]));
                     triangles.Add(triangles.Count);
-                    i++;
-                    vertices.Add(new Vector3(tri_data[i * 6], tri_data[i * 6 + 1], tri_data[i * 6 + 2]));
-                    normals.Add(new Vector3(tri_data[i * 6 + 3], tri_data[i * 6 + 4], tri_data[i * 6 + 5]));
+
+                    vertices.Add(new Vector3(tri_data[(i + 1) * 6], tri_data[(i + 1) * 6 + 1], tri_data[(i + 1) * 6 + 2]));
+                    normals.Add(new Vector3(tri_data[(i + 1) * 6 + 3], tri_data[(i + 1) * 6 + 4], tri_data[(i + 1) * 6 + 5]));
                     triangles.Add(triangles.Count);
-                    i++;
-                    vertices.Add(new Vector3(tri_data[i * 6], tri_data[i * 6 + 1], tri_data[i * 6 + 2]));
-                    normals.Add(new Vector3(tri_data[i * 6 + 3], tri_data[i * 6 + 4], tri_data[i * 6 + 5]));
+
+                    vertices.Add(new Vector3(tri_data[(i + 2) * 6], tri_data[(i + 2) * 6 + 1], tri_data[(i + 2) * 6 + 2]));
+                    normals.Add(new Vector3(tri_data[(i + 2) * 6 + 3], tri_data[(i + 2) * 6 + 4], tri_data[(i + 2) * 6 + 5]));
                     triangles.Add(triangles.Count);
+
                 }
+                
+                // sec_count++;
+
                 tri_data = null;
-                GC.Collect();
+                // GC.Collect();
             }
 
+            //print(buffer.Length);
 
+            //vertices = new Vector3[buffer.Length / 6];
+            //normals = new Vector3[buffer.Length / 6];
+            //triangles = new int[buffer.Length / 6];
+
+            //Parallel.For(0, buffer.Length / 6, i =>
+            //// for (int i=0; i< buffer.Length / 6; i++)
+            //{
+            //    vertices[i] = new Vector3(buffer[i * 6], buffer[i * 6 + 1], buffer[i * 6 + 2]);
+            //    normals[i] = new Vector3(buffer[i * 6 + 3], buffer[i * 6 + 4], buffer[i * 6 + 5]);
+            //    triangles[i] = i;
+            //});
+
+            //mesh.vertices = vertices;
+            //mesh.triangles = triangles;
+            //mesh.normals = normals;
+            
             mesh.vertices = vertices.ToArray();
             mesh.normals = normals.ToArray();
             mesh.triangles = triangles.ToArray();
 
+            // mesh.RecalculateNormals();
+
             vertices.Clear();
             normals.Clear();
             triangles.Clear();
-
+            
             transform.localScale = Vector3.one;
         }
 
@@ -881,36 +946,8 @@ public class MarchingCubes : MonoBehaviour
 
         Init();
         ChangeResolution(0.25f);
-        
-
-        //float start = Time.realtimeSinceStartup;
-        //Parallel.For(0, resolution.x + 1, i =>
-        //  {
-        //      sampleBuffer[i] = new float[resolution.y + 1][];
-        //      cellVertices[i] = new Vector3Int[resolution.y + 1][];
-        //      cellEdges[i] = new int[resolution.y + 1][][];
-        //    //Parallel.For(0, resolution.y+1, j =>
-        //    for (int j = 0; j < resolution.y + 1; j++)
-        //      {
-        //          sampleBuffer[i][j] = new float[resolution.z + 1];
-        //          cellVertices[i][j] = new Vector3Int[resolution.z + 1];
-        //          cellEdges[i][j] = new int[resolution.z + 1][];
-        //        // Parallel.For(0, resolution.z+1, k =>
-        //        for (int k = 0; k < resolution.z + 1; k++)
-        //          {
-        //              Vector3Int curr_p = new Vector3Int(i, j, k);
-        //              sampleBuffer[i][j][k] = trilinear(curr_p, data, resolution, data_dim);
-        //              cellVertices[i][j][k] = new Vector3Int(i, j, k);
-        //          }
-        //      }
-        //  });
-        //print(string.Format("Interpolation Time: {0}", Time.realtimeSinceStartup - start));
-
-
-
         Reconstruct();
-        
-        // Debug.Log(TriangulationTable[162,2]);
+
     }
 
     // Update is called once per frame

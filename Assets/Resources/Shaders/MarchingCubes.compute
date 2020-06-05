@@ -1,9 +1,9 @@
 ﻿#pragma kernel MarchingCubes
 
-Texture3D<float4> _densityTexture;
-float _isoLevel;
+Texture3D<float4> _tex3D;
+float _threshold;
 int3 _idOffset;
-int _gridSize;
+int _resolution;
 int _triangleCount;
 
 struct Vertex
@@ -19,7 +19,7 @@ struct Triangle
 
 AppendStructuredBuffer<Triangle> triangleRW;
 
-SamplerState myLinearClampSampler;
+SamplerState LinearClampSampler;
 
 static const int edgeTable[256] = {
 	0x0  , 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c,
@@ -313,132 +313,119 @@ static const int triTable[256][16] =
 { 0, 3, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
 { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 } };
 
-float SampleData(int3 pos) {
-	return _densityTexture.Load(int4(pos, 0)).x;
-	// return _densityTexture.Sample(myLinearClampSampler, float4(pos, 0)).x;
-}
 
-float SampleLinear(float3 p)
+float Sample(float3 p)
 {
-	// need to mitigate the offset in p[x], so +float3(0.5) to be in [0;1] range
-	return _densityTexture.SampleLevel(myLinearClampSampler, p, 0).x;
+	return _tex3D.SampleLevel(LinearClampSampler, p, 0).x;
 }
 
 float3 VertexInterp(float3 p1, float3 p2, float valp1, float valp2)
 {
-	return lerp(p1, p2, (_isoLevel - valp1) / (valp2 - valp1));
+	return lerp(p1, p2, (_threshold - valp1) / (valp2 - valp1));
 }
 
-float3 CalculateGradient(float3 p)
+float3 getNormal(float3 p)
 {
-	float ratio = 1.0 / (_gridSize - 1);
+	float inv_res = 1.0 / (_resolution);
 
 	return float3(
-		SampleLinear(p - float3(1.0, 0.0, 0.0) * ratio)
-		- SampleLinear(p + float3(1.0, 0.0, 0.0) * ratio),
+		Sample(p - float3(1.0, 0.0, 0.0) * inv_res)
+		- Sample(p + float3(1.0, 0.0, 0.0) * inv_res),
 
-		SampleLinear(p - float3(0.0, 1.0, 0.0) * ratio)
-		- SampleLinear(p + float3(0.0, 1.0, 0.0) * ratio),
+		Sample(p - float3(0.0, 1.0, 0.0) * inv_res)
+		- Sample(p + float3(0.0, 1.0, 0.0) * inv_res),
 
-		SampleLinear(p - float3(0.0, 0.0, 1.0) * ratio)
-		- SampleLinear(p + float3(0.0, 0.0, 1.0) * ratio)
+		Sample(p - float3(0.0, 0.0, 1.0) * inv_res)
+		- Sample(p + float3(0.0, 0.0, 1.0) * inv_res)
 		);
 }
 
 [numthreads(1, 1, 1)]
 void MarchingCubes(uint3 threadId : SV_DispatchThreadID)
 {
-	float3 offset = float3(-0.0, -0.0, -0.0);
 
 	float3 p[8] = {
-		p[0] = (threadId + _idOffset + float3(0, 0, 1)) / (_gridSize - 1) + offset,
-		p[1] = (threadId + _idOffset + float3(1, 0, 1)) / (_gridSize - 1) + offset,
-		p[2] = (threadId + _idOffset + float3(1, 0, 0)) / (_gridSize - 1) + offset,
-		p[3] = (threadId + _idOffset + float3(0, 0, 0)) / (_gridSize - 1) + offset,
-		p[4] = (threadId + _idOffset + float3(0, 1, 1)) / (_gridSize - 1) + offset,
-		p[5] = (threadId + _idOffset + float3(1, 1, 1)) / (_gridSize - 1) + offset,
-		p[6] = (threadId + _idOffset + float3(1, 1, 0)) / (_gridSize - 1) + offset,
-		p[7] = (threadId + _idOffset + float3(0, 1, 0)) / (_gridSize - 1) + offset
+		p[0] = (threadId + _idOffset + float3(0, 0, 1)) / (_resolution),
+		p[1] = (threadId + _idOffset + float3(1, 0, 1)) / (_resolution),
+		p[2] = (threadId + _idOffset + float3(1, 0, 0)) / (_resolution),
+		p[3] = (threadId + _idOffset + float3(0, 0, 0)) / (_resolution),
+		p[4] = (threadId + _idOffset + float3(0, 1, 1)) / (_resolution),
+		p[5] = (threadId + _idOffset + float3(1, 1, 1)) / (_resolution),
+		p[6] = (threadId + _idOffset + float3(1, 1, 0)) / (_resolution),
+		p[7] = (threadId + _idOffset + float3(0, 1, 0)) / (_resolution)
 	};
 
 	float val[8] = {
-		//SampleData(threadId + int3(0, 0, 1)),
-		//SampleData(threadId + int3(1, 0, 1)),
-		//SampleData(threadId + int3(1, 0, 0)),
-		//SampleData(threadId + int3(0, 0, 0)),
-		//SampleData(threadId + int3(0, 1, 1)),
-		//SampleData(threadId + int3(1, 1, 1)),
-		//SampleData(threadId + int3(1, 1, 0)),
-		//SampleData(threadId + int3(0, 1, 0))
-		SampleLinear(p[0]),
-		SampleLinear(p[1]),
-		SampleLinear(p[2]),
-		SampleLinear(p[3]),
-		SampleLinear(p[4]),
-		SampleLinear(p[5]),
-		SampleLinear(p[6]),
-		SampleLinear(p[7])
+		Sample(p[0]),
+		Sample(p[1]),
+		Sample(p[2]),
+		Sample(p[3]),
+		Sample(p[4]),
+		Sample(p[5]),
+		Sample(p[6]),
+		Sample(p[7])
 	};
 
-	int cubeIndex = 0;
-	if (val[0] < _isoLevel) cubeIndex |= 1;
-	if (val[1] < _isoLevel) cubeIndex |= 2;
-	if (val[2] < _isoLevel) cubeIndex |= 4;
-	if (val[3] < _isoLevel) cubeIndex |= 8;
-	if (val[4] < _isoLevel) cubeIndex |= 16;
-	if (val[5] < _isoLevel) cubeIndex |= 32;
-	if (val[6] < _isoLevel) cubeIndex |= 64;
-	if (val[7] < _isoLevel) cubeIndex |= 128;
+	int cube_index = 0;
+	if (val[0] < _threshold) cube_index |= 1;
+	if (val[1] < _threshold) cube_index |= 2;
+	if (val[2] < _threshold) cube_index |= 4;
+	if (val[3] < _threshold) cube_index |= 8;
+	if (val[4] < _threshold) cube_index |= 16;
+	if (val[5] < _threshold) cube_index |= 32;
+	if (val[6] < _threshold) cube_index |= 64;
+	if (val[7] < _threshold) cube_index |= 128;
 
 	float3 vertlist[12];
 
-	if (edgeTable[cubeIndex] != 0)
+	if (edgeTable[cube_index] != 0)
 	{
-		if (edgeTable[cubeIndex] & 1)
+		if (edgeTable[cube_index] & 1)
 			vertlist[0] = VertexInterp(p[0], p[1], val[0], val[1]);
-		if (edgeTable[cubeIndex] & 2)
+		if (edgeTable[cube_index] & 2)
 			vertlist[1] = VertexInterp(p[1], p[2], val[1], val[2]);
-		if (edgeTable[cubeIndex] & 4)
+		if (edgeTable[cube_index] & 4)
 			vertlist[2] = VertexInterp(p[2], p[3], val[2], val[3]);
-		if (edgeTable[cubeIndex] & 8)
+		if (edgeTable[cube_index] & 8)
 			vertlist[3] = VertexInterp(p[3], p[0], val[3], val[0]);
-		if (edgeTable[cubeIndex] & 16)
+		if (edgeTable[cube_index] & 16)
 			vertlist[4] = VertexInterp(p[4], p[5], val[4], val[5]);
-		if (edgeTable[cubeIndex] & 32)
+		if (edgeTable[cube_index] & 32)
 			vertlist[5] = VertexInterp(p[5], p[6], val[5], val[6]);
-		if (edgeTable[cubeIndex] & 64)
+		if (edgeTable[cube_index] & 64)
 			vertlist[6] = VertexInterp(p[6], p[7], val[6], val[7]);
-		if (edgeTable[cubeIndex] & 128)
+		if (edgeTable[cube_index] & 128)
 			vertlist[7] = VertexInterp(p[7], p[4], val[7], val[4]);
-		if (edgeTable[cubeIndex] & 256)
+		if (edgeTable[cube_index] & 256)
 			vertlist[8] = VertexInterp(p[0], p[4], val[0], val[4]);
-		if (edgeTable[cubeIndex] & 512)
+		if (edgeTable[cube_index] & 512)
 			vertlist[9] = VertexInterp(p[1], p[5], val[1], val[5]);
-		if (edgeTable[cubeIndex] & 1024)
+		if (edgeTable[cube_index] & 1024)
 			vertlist[10] = VertexInterp(p[2], p[6], val[2], val[6]);
-		if (edgeTable[cubeIndex] & 2048)
+		if (edgeTable[cube_index] & 2048)
 			vertlist[11] = VertexInterp(p[3], p[7], val[3], val[7]);
 
-		for (int i = 0; triTable[cubeIndex][i] != -1; i += 3) {
+		for (int i = 0; triTable[cube_index][i] != -1; i += 3) {
 			Triangle t;
 
 			Vertex v0;
 			Vertex v1;
 			Vertex v2;
 
-			v0.vPosition = vertlist[triTable[cubeIndex][i]];
-			v1.vPosition = vertlist[triTable[cubeIndex][i + 1]];
-			v2.vPosition = vertlist[triTable[cubeIndex][i + 2]];
+			v0.vPosition = vertlist[triTable[cube_index][i]];
+			v1.vPosition = vertlist[triTable[cube_index][i + 1]];
+			v2.vPosition = vertlist[triTable[cube_index][i + 2]];
 
-			v0.vNormal = normalize(CalculateGradient(v0.vPosition));
-			v1.vNormal = normalize(CalculateGradient(v1.vPosition));
-			v2.vNormal = normalize(CalculateGradient(v2.vPosition));
+			v0.vNormal = normalize(getNormal(v0.vPosition));
+			v1.vNormal = normalize(getNormal(v1.vPosition));
+			v2.vNormal = normalize(getNormal(v2.vPosition));
 
 			t.v[0] = v0;
 			t.v[1] = v1;
 			t.v[2] = v2;
 
 			triangleRW.Append(t);
+			_triangleCount += 1;
 		}
 	}
 }
